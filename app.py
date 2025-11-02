@@ -11,20 +11,23 @@ st.set_page_config(
     layout="wide",
 )
 
-# --- Helper Functions (Same as before) ---
+# --- Helper Functions ---
 def get_app_index(app_id):
+    """Finds the index of an application in the session state list by its ID."""
     for index, app in enumerate(st.session_state.applications):
         if app['id'] == app_id:
             return index
     return None
 
 def move_app(app_id, new_status):
+    """Moves an application to a new status column."""
     index = get_app_index(app_id)
     if index is not None:
         st.session_state.applications[index]['status'] = new_status
         st.success(f"Moved {st.session_state.applications[index]['company']} to {new_status}!")
 
 def delete_app(app_id):
+    """Deletes an application from the session state."""
     index = get_app_index(app_id)
     if index is not None:
         company_name = st.session_state.applications[index]['company']
@@ -33,6 +36,7 @@ def delete_app(app_id):
         st.rerun()
 
 def update_app_field(app_id, field_name):
+    """Updates a specific field (like a note or date) for an application."""
     index = get_app_index(app_id)
     if index is not None:
         widget_key = f"{field_name}_{app_id}"
@@ -54,19 +58,25 @@ def load_data(conn):
     try:
         df = conn.read(worksheet="Applications", usecols=list(range(11)), ttl=5)
         df = df.dropna(how='all')
+        
+        # Convert date/time columns from string. GSheets stores everything as strings.
         for col in ['ppt_date', 'test_date']:
             df[col] = pd.to_datetime(df[col], errors='coerce').dt.date
         for col in ['ppt_time', 'test_time']:
             df[col] = pd.to_datetime(df[col], format='%H:%M:%S', errors='coerce').dt.time
-        df = df.where(pd.notnull(df), None)
+            
+        # --- THIS IS THE FIX ---
+        # Explicitly replace all Pandas NaT (Not a Time) values with None.
+        # st.date_input/st.time_input cannot handle NaT, they only accept None.
+        df = df.astype(object).where(pd.notnull(df), None)
+        # --- END OF FIX ---
+        
         return df.to_dict('records')
     
-    # --- ERROR HANDLING UPDATED ---
     except Exception as e:
         st.error("Failed to load from Google Sheet. See details below.")
         st.exception(e) # This will print the FULL error traceback
         return []
-    # --- END OF UPDATE ---
 
 def save_data(conn):
     """Saves the current session state back to Google Sheet."""
@@ -88,23 +98,24 @@ def save_data(conn):
         df = df[all_cols]
 
         conn.clear(worksheet="Applications")
-        conn.update(works_heet="Applications", data=df)
+        
+        # --- THIS IS THE 2nd FIX (Typo correction) ---
+        conn.update(worksheet="Applications", data=df) # Was 'works_heet'
+        # --- END OF 2nd FIX ---
+        
         st.sidebar.success("Saved changes to Google Sheet!")
         
     except Exception as e:
         st.sidebar.error("Failed to save data. See details below.")
-        st.exception(e) # This will print the FULL error traceback
+        st.exception(e)
 
 # --- State Initialization ---
-
-# --- ERROR HANDLING UPDATED ---
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
 except Exception as e:
     st.error("Failed to create Google Sheets connection. Check your [connections.gsheets] in Streamlit Secrets.")
-    st.exception(e) # This will print the FULL error traceback
+    st.exception(e)
     st.stop()
-# --- END OF UPDATE ---
 
 if 'applications' not in st.session_state:
     st.session_state.applications = load_data(conn)
@@ -188,6 +199,10 @@ else:
 # --- Main Page: Kanban Board ---
 col1, col2, col3 = st.columns(3)
 
+# Note: The 'app.get()' method with a default value (e.g., app.get('company', 'N/A'))
+# is robust and handles cases where a key might be missing, so we keep that.
+# The NaT fix was in load_data, so no changes are needed here.
+
 with col1:
     st.header("Applied 📥")
     for app in filtered_apps:
@@ -217,7 +232,7 @@ with col2:
     for app in filtered_apps:
         if app['status'] == 'PPT':
             if isinstance(app, dict):
-                with st.expander(f"**{app.get('company', 'N/Read-only')}** - {app.get('role', 'N/A')}"):
+                with st.expander(f"**{app.get('company', 'N/A')}** - {app.get('role', 'N/A')}"):
                     st.text_area(
                         "PPT Note", value=app.get('ppt_note', ''), key=f"ppt_note_{app.get('id')}",
                         on_change=update_app_field, args=(app.get('id'), 'ppt_note')
