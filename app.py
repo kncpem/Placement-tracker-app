@@ -77,7 +77,11 @@ def load_data(conn):
         return df.to_dict('records')
     
     except Exception as e:
-        st.error(f"Failed to load from Google Sheet. Did you set it up correctly? Error: {e}")
+        # We add a specific check for the 'Spreadsheet not found' error
+        if "SPREADSHEET_NOT_FOUND" in str(e):
+            st.error("Error: Spreadsheet not found. Did you set the 'spreadsheet' URL in Streamlit Secrets and share the sheet?")
+        else:
+            st.error(f"Failed to load from Google Sheet. Did you set it up correctly? Error: {e}")
         return []
 
 def save_data(conn):
@@ -86,7 +90,6 @@ def save_data(conn):
         df = pd.DataFrame(st.session_state.applications)
         
         # Convert date/time objects to ISO strings for GSheets
-        # GSheets best handles strings.
         for col in ['ppt_date', 'test_date']:
             df[col] = df[col].apply(lambda x: x.isoformat() if isinstance(x, datetime.date) else None)
         for col in ['ppt_time', 'test_time']:
@@ -105,8 +108,15 @@ def save_data(conn):
         # Reorder columns to match the sheet exactly
         df = df[all_cols]
 
-        # Use conn.write() to overwrite the entire sheet
-        conn.write(worksheet="Applications", data=df, clear=True)
+        # --- THIS IS THE FIX ---
+        # 1. Clear the entire sheet to avoid leaving old data
+        conn.clear(worksheet="Applications")
+        
+        # 2. Update the sheet with the new dataframe
+        #    (The headers are written by default)
+        conn.update(worksheet="Applications", data=df)
+        # --- END OF FIX ---
+        
         st.sidebar.success("Saved changes to Google Sheet!")
         
     except Exception as e:
@@ -176,7 +186,7 @@ st.sidebar.button(
 )
 st.sidebar.button(
     "Reload from Cloud", 
-    on_click=lambda: st.session_state.clear() or st.rerun(),
+    on_clic=lambda: st.session_state.clear() or st.rerun(),
     use_container_width=True
 )
 
@@ -210,78 +220,88 @@ with col1:
     st.header("Applied 📥")
     for app in filtered_apps:
         if app['status'] == 'Applied':
-            with st.expander(f"**{app['company']}** - {app['role']}"):
-                st.text_area(
-                    "Note", value=app['applied_note'], key=f"applied_note_{app['id']}", 
-                    on_change=update_app_field, args=(app['id'], 'applied_note')
-                )
-                
-                b_col1, b_col2 = st.columns(2)
-                b_col1.button(
-                    "Move to PPT", key=f"move_ppt_{app['id']}", 
-                    on_click=move_app, args=(app['id'], 'PPT'),
-                    type="primary", use_container_width=True
-                )
-                b_col2.button(
-                    "Delete", key=f"delete_applied_{app['id']}", 
-                    on_click=delete_app, args=(app['id'],),
-                    use_container_width=True
-                )
+            # Check if app is a dictionary before accessing keys
+            if isinstance(app, dict):
+                with st.expander(f"**{app.get('company', 'N/A')}** - {app.get('role', 'N/A')}"):
+                    st.text_area(
+                        "Note", value=app.get('applied_note', ''), key=f"applied_note_{app.get('id')}", 
+                        on_change=update_app_field, args=(app.get('id'), 'applied_note')
+                    )
+                    
+                    b_col1, b_col2 = st.columns(2)
+                    b_col1.button(
+                        "Move to PPT", key=f"move_ppt_{app.get('id')}", 
+                        on_click=move_app, args=(app.get('id'), 'PPT'),
+                        type="primary", use_container_width=True
+                    )
+                    b_col2.button(
+                        "Delete", key=f"delete_applied_{app.get('id')}", 
+                        on_click=delete_app, args=(app.get('id'),),
+                        use_container_width=True
+                    )
+            else:
+                st.error(f"Error: Found malformed data in 'Applied' column: {app}")
 
 with col2:
     st.header("PPT 📅")
     for app in filtered_apps:
         if app['status'] == 'PPT':
-            with st.expander(f"**{app['company']}** - {app['role']}"):
-                st.text_area(
-                    "PPT Note", value=app['ppt_note'], key=f"ppt_note_{app['id']}",
-                    on_change=update_app_field, args=(app['id'], 'ppt_note')
-                )
-                
-                d_col1, d_col2 = st.columns(2)
-                d_col1.date_input(
-                    "PPT Date", value=app['ppt_date'], key=f"ppt_date_{app['id']}",
-                    on_change=update_app_field, args=(app['id'], 'ppt_date')
-                )
-                d_col2.time_input(
-                    "PPT Time", value=app['ppt_time'], key=f"ppt_time_{app['id']}",
-                    on_change=update_app_field, args=(app['id'], 'ppt_time')
-                )
-                
-                b_col1, b_col2 = st.columns(2)
-                b_col1.button(
-                    "Move to Test", key=f"move_test_{app['id']}", 
-                    on_click=move_app, args=(app['id'], 'Test'),
-                    type="primary", use_container_width=True
-                )
-                b_col2.button(
-                    "Delete", key=f"delete_ppt_{app['id']}", 
-                    on_click=delete_app, args=(app['id'],),
-                    use_container_width=True
-                )
+            if isinstance(app, dict):
+                with st.expander(f"**{app.get('company', 'N/A')}** - {app.get('role', 'N/A')}"):
+                    st.text_area(
+                        "PPT Note", value=app.get('ppt_note', ''), key=f"ppt_note_{app.get('id')}",
+                        on_change=update_app_field, args=(app.get('id'), 'ppt_note')
+                    )
+                    
+                    d_col1, d_col2 = st.columns(2)
+                    d_col1.date_input(
+                        "PPT Date", value=app.get('ppt_date'), key=f"ppt_date_{app.get('id')}",
+                        on_change=update_app_field, args=(app.get('id'), 'ppt_date')
+                    )
+                    d_col2.time_input(
+                        "PPT Time", value=app.get('ppt_time'), key=f"ppt_time_{app.get('id')}",
+                        on_change=update_app_field, args=(app.get('id'), 'ppt_time')
+                    )
+                    
+                    b_col1, b_col2 = st.columns(2)
+                    b_col1.button(
+                        "Move to Test", key=f"move_test_{app.get('id')}", 
+                        on_click=move_app, args=(app.get('id'), 'Test'),
+                        type="primary", use_container_width=True
+                    )
+                    b_col2.button(
+                        "Delete", key=f"delete_ppt_{app.get('id')}", 
+                        on_click=delete_app, args=(app.get('id'),),
+                        use_container_width=True
+                    )
+            else:
+                st.error(f"Error: Found malformed data in 'PPT' column: {app}")
 
 with col3:
     st.header("Test 📝")
     for app in filtered_apps:
         if app['status'] == 'Test':
-            with st.expander(f"**{app['company']}** - {app['role']}"):
-                st.text_area(
-                    "Test Note", value=app['test_note'], key=f"test_note_{app['id']}",
-                    on_change=update_app_field, args=(app['id'], 'test_note')
-                )
-                
-                d_col1, d_col2 = st.columns(2)
-                d_col1.date_input(
-                    "Test Date", value=app['test_date'], key=f"test_date_{app['id']}",
-                    on_change=update_app_field, args=(app['id'], 'test_date')
-                )
-                d_col2.time_input(
-                    "Test Time", value=app['test_time'], key=f"test_time_{app['id']}",
-                    on_change=update_app_field, args=(app['id'], 'test_time')
-                )
-                
-                st.button(
-                    "Delete", key=f"delete_test_{app['id']}", 
-                    on_click=delete_app, args=(app['id'],),
-                    use_container_width=True
-                )
+            if isinstance(app, dict):
+                with st.expander(f"**{app.get('company', 'N/A')}** - {app.get('role', 'N/A')}"):
+                    st.text_area(
+                        "Test Note", value=app.get('test_note', ''), key=f"test_note_{app.get('id')}",
+                        on_change=update_app_field, args=(app.get('id'), 'test_note')
+                    )
+                    
+                    d_col1, d_col2 = st.columns(2)
+                    d_col1.date_input(
+                        "Test Date", value=app.get('test_date'), key=f"test_date_{app.get('id')}",
+                        on_change=update_app_field, args=(app.get('id'), 'test_date')
+                    )
+                    d_col2.time_input(
+                        "Test Time", value=app.get('test_time'), key=f"test_time_{app.get('id')}",
+                        on_change=update_app_field, args=(app.get('id'), 'test_time')
+                    )
+                    
+                    st.button(
+                        "Delete", key=f"delete_test_{app.get('id')}", 
+                        on_click=delete_app, args=(app.get('id'),),
+                        use_container_width=True
+                    )
+            else:
+                st.error(f"Error: Found malformed data in 'Test' column: {app}")
