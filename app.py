@@ -108,14 +108,12 @@ def save_data(conn):
         # Reorder columns to match the sheet exactly
         df = df[all_cols]
 
-        # --- THIS IS THE FIX ---
         # 1. Clear the entire sheet to avoid leaving old data
         conn.clear(worksheet="Applications")
         
         # 2. Update the sheet with the new dataframe
         #    (The headers are written by default)
         conn.update(worksheet="Applications", data=df)
-        # --- END OF FIX ---
         
         st.sidebar.success("Saved changes to Google Sheet!")
         
@@ -184,11 +182,15 @@ st.sidebar.button(
     type="primary",
     use_container_width=True
 )
+
+# --- THIS IS THE FIX ---
 st.sidebar.button(
     "Reload from Cloud", 
-    on_clic=lambda: st.session_state.clear() or st.rerun(),
+    on_click=lambda: st.session_state.clear() or st.rerun(), # Changed on_clic to on_click
     use_container_width=True
 )
+# --- END OF FIX ---
+
 
 # --- Sidebar: Role Filtering (Same as before) ---
 st.sidebar.subheader("Filters")
