@@ -12,90 +12,71 @@ st.set_page_config(
 )
 
 # --- Helper Functions (Same as before) ---
-
 def get_app_index(app_id):
-    """Finds the index of an application in the session state list by its ID."""
     for index, app in enumerate(st.session_state.applications):
         if app['id'] == app_id:
             return index
     return None
 
 def move_app(app_id, new_status):
-    """Moves an application to a new status column."""
     index = get_app_index(app_id)
     if index is not None:
         st.session_state.applications[index]['status'] = new_status
         st.success(f"Moved {st.session_state.applications[index]['company']} to {new_status}!")
 
 def delete_app(app_id):
-    """Deletes an application from the session state."""
     index = get_app_index(app_id)
     if index is not None:
         company_name = st.session_state.applications[index]['company']
         st.session_state.applications.pop(index)
         st.warning(f"Deleted {company_name} application.")
-        st.rerun() # Rerun to update the view immediately
+        st.rerun()
 
 def update_app_field(app_id, field_name):
-    """Updates a specific field (like a note or date) for an application."""
     index = get_app_index(app_id)
     if index is not None:
         widget_key = f"{field_name}_{app_id}"
         new_value = st.session_state[widget_key]
-        
-        # Handle date/time conversion if necessary (st.time_input can return str)
         if isinstance(new_value, str):
             try:
-                if ':' in new_value and len(new_value) <= 8: # Likely a time
+                if ':' in new_value and len(new_value) <= 8:
                     new_value = datetime.time.fromisoformat(new_value)
-                elif '-' in new_value: # Likely a date
+                elif '-' in new_value:
                     new_value = datetime.date.fromisoformat(new_value)
             except ValueError:
-                pass # Keep as string if parsing fails (e.g., in a note)
-                
+                pass
         st.session_state.applications[index][field_name] = new_value
 
-# --- Data Persistence Functions (NEW) ---
+# --- Data Persistence Functions ---
 
 def load_data(conn):
     """Loads data from Google Sheet and parses dates/times."""
     try:
-        # Read data from the first sheet (named "Applications")
         df = conn.read(worksheet="Applications", usecols=list(range(11)), ttl=5)
-        df = df.dropna(how='all') # Drop empty rows
-        
-        # Convert date/time columns from string. GSheets stores everything as strings.
+        df = df.dropna(how='all')
         for col in ['ppt_date', 'test_date']:
-            # 'coerce' turns bad dates into NaT (Not a Time)
             df[col] = pd.to_datetime(df[col], errors='coerce').dt.date
         for col in ['ppt_time', 'test_time']:
-            # GSheets time format might be tricky, try standard ISO
             df[col] = pd.to_datetime(df[col], format='%H:%M:%S', errors='coerce').dt.time
-            
-        # Handle NaT/NaN from failed parses, replace with None
         df = df.where(pd.notnull(df), None)
         return df.to_dict('records')
     
+    # --- ERROR HANDLING UPDATED ---
     except Exception as e:
-        # We add a specific check for the 'Spreadsheet not found' error
-        if "SPREADSHEET_NOT_FOUND" in str(e):
-            st.error("Error: Spreadsheet not found. Did you set the 'spreadsheet' URL in Streamlit Secrets and share the sheet?")
-        else:
-            st.error(f"Failed to load from Google Sheet. Did you set it up correctly? Error: {e}")
+        st.error("Failed to load from Google Sheet. See details below.")
+        st.exception(e) # This will print the FULL error traceback
         return []
+    # --- END OF UPDATE ---
 
 def save_data(conn):
     """Saves the current session state back to Google Sheet."""
     try:
         df = pd.DataFrame(st.session_state.applications)
-        
-        # Convert date/time objects to ISO strings for GSheets
         for col in ['ppt_date', 'test_date']:
             df[col] = df[col].apply(lambda x: x.isoformat() if isinstance(x, datetime.date) else None)
         for col in ['ppt_time', 'test_time']:
             df[col] = df[col].apply(lambda x: x.isoformat() if isinstance(x, datetime.time) else None)
-            
-        # Ensure all 11 columns exist, even if empty, to match the sheet
+        
         all_cols = [
             "id", "company", "role", "status", "applied_note", 
             "ppt_note", "ppt_date", "ppt_time", 
@@ -104,35 +85,29 @@ def save_data(conn):
         for col in all_cols:
             if col not in df.columns:
                 df[col] = None
-        
-        # Reorder columns to match the sheet exactly
         df = df[all_cols]
 
-        # 1. Clear the entire sheet to avoid leaving old data
         conn.clear(worksheet="Applications")
-        
-        # 2. Update the sheet with the new dataframe
-        #    (The headers are written by default)
-        conn.update(worksheet="Applications", data=df)
-        
+        conn.update(works_heet="Applications", data=df)
         st.sidebar.success("Saved changes to Google Sheet!")
         
     except Exception as e:
-        st.sidebar.error(f"Failed to save data: {e}")
+        st.sidebar.error("Failed to save data. See details below.")
+        st.exception(e) # This will print the FULL error traceback
 
 # --- State Initialization ---
 
-# Establish GSheets connection
+# --- ERROR HANDLING UPDATED ---
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
 except Exception as e:
-    st.error(f"Failed to create Google Sheets connection. Check your [connections.gsheets] in Streamlit Secrets. Error: {e}")
-    st.stop() # Stop the app if connection fails
+    st.error("Failed to create Google Sheets connection. Check your [connections.gsheets] in Streamlit Secrets.")
+    st.exception(e) # This will print the FULL error traceback
+    st.stop()
+# --- END OF UPDATE ---
 
-# Load data from GSheet ONLY on the first run
 if 'applications' not in st.session_state:
     st.session_state.applications = load_data(conn)
-
 
 # --- Main Application Title ---
 st.title("My Placement Tracker 📋")
@@ -152,7 +127,7 @@ with st.sidebar.form("new_app_form", clear_on_submit=True):
     if submitted:
         if company and role:
             new_app = {
-                "id": str(uuid.uuid4()),  # Unique ID
+                "id": str(uuid.uuid4()),
                 "company": company,
                 "role": role,
                 "status": "Applied",
@@ -169,7 +144,7 @@ with st.sidebar.form("new_app_form", clear_on_submit=True):
         else:
             st.sidebar.error("Please fill in both Company Name and Role.")
 
-# --- Sidebar: Data Persistence (NEW) ---
+# --- Sidebar: Data Persistence ---
 st.sidebar.subheader("Save/Load Data")
 st.sidebar.markdown("""
 Your data is loaded from Google Sheets. Click **Save** to persist any changes you make.
@@ -182,17 +157,13 @@ st.sidebar.button(
     type="primary",
     use_container_width=True
 )
-
-# --- THIS IS THE FIX ---
 st.sidebar.button(
     "Reload from Cloud", 
-    on_click=lambda: st.session_state.clear() or st.rerun(), # Changed on_clic to on_click
+    on_click=lambda: st.session_state.clear() or st.rerun(),
     use_container_width=True
 )
-# --- END OF FIX ---
 
-
-# --- Sidebar: Role Filtering (Same as before) ---
+# --- Sidebar: Role Filtering ---
 st.sidebar.subheader("Filters")
 all_roles = sorted(list(set(app['role'] for app in st.session_state.applications)))
 
@@ -214,22 +185,19 @@ if selected_roles:
 else:
     filtered_apps = []
 
-
-# --- Main Page: Kanban Board (UPDATED with st.expander) ---
+# --- Main Page: Kanban Board ---
 col1, col2, col3 = st.columns(3)
 
 with col1:
     st.header("Applied 📥")
     for app in filtered_apps:
         if app['status'] == 'Applied':
-            # Check if app is a dictionary before accessing keys
             if isinstance(app, dict):
                 with st.expander(f"**{app.get('company', 'N/A')}** - {app.get('role', 'N/A')}"):
                     st.text_area(
                         "Note", value=app.get('applied_note', ''), key=f"applied_note_{app.get('id')}", 
                         on_change=update_app_field, args=(app.get('id'), 'applied_note')
                     )
-                    
                     b_col1, b_col2 = st.columns(2)
                     b_col1.button(
                         "Move to PPT", key=f"move_ppt_{app.get('id')}", 
@@ -249,12 +217,11 @@ with col2:
     for app in filtered_apps:
         if app['status'] == 'PPT':
             if isinstance(app, dict):
-                with st.expander(f"**{app.get('company', 'N/A')}** - {app.get('role', 'N/A')}"):
+                with st.expander(f"**{app.get('company', 'N/Read-only')}** - {app.get('role', 'N/A')}"):
                     st.text_area(
                         "PPT Note", value=app.get('ppt_note', ''), key=f"ppt_note_{app.get('id')}",
                         on_change=update_app_field, args=(app.get('id'), 'ppt_note')
                     )
-                    
                     d_col1, d_col2 = st.columns(2)
                     d_col1.date_input(
                         "PPT Date", value=app.get('ppt_date'), key=f"ppt_date_{app.get('id')}",
@@ -264,7 +231,6 @@ with col2:
                         "PPT Time", value=app.get('ppt_time'), key=f"ppt_time_{app.get('id')}",
                         on_change=update_app_field, args=(app.get('id'), 'ppt_time')
                     )
-                    
                     b_col1, b_col2 = st.columns(2)
                     b_col1.button(
                         "Move to Test", key=f"move_test_{app.get('id')}", 
@@ -289,7 +255,6 @@ with col3:
                         "Test Note", value=app.get('test_note', ''), key=f"test_note_{app.get('id')}",
                         on_change=update_app_field, args=(app.get('id'), 'test_note')
                     )
-                    
                     d_col1, d_col2 = st.columns(2)
                     d_col1.date_input(
                         "Test Date", value=app.get('test_date'), key=f"test_date_{app.get('id')}",
@@ -299,7 +264,6 @@ with col3:
                         "Test Time", value=app.get('test_time'), key=f"test_time_{app.get('id')}",
                         on_change=update_app_field, args=(app.get('id'), 'test_time')
                     )
-                    
                     st.button(
                         "Delete", key=f"delete_test_{app.get('id')}", 
                         on_click=delete_app, args=(app.get('id'),),
